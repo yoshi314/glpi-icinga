@@ -21,7 +21,7 @@ Nagios/Icinga1
 
 Define commands (you can pass more args to the scripts) in commands.cfg
 
-
+```
 define command {
         command_name    handler-glpi-host-ticket
         command_line    /usr/bin/perl /usr/local/lib/nagios/event-handlers/glpi-9.1/ticket-host.pl lasthoststate="$LASTHOSTSTATE$" hoststate="$HOSTSTATE$" state="$HOSTSTATETYPE$" eventhost="$HOSTNAME$" hostattempts="$HOSTATTEMPT$" maxhostattempts="$MAXHOSTATTEMPTS$" hostproblemid="$ HOSTPROBLEMID$" lasthostproblemid="$LASTHOSTPROBLEMID$" hoststatetype="$HOSTSTATETYPE$" >> /tmp/ticket-host.log
@@ -31,7 +31,7 @@ define command {
         command_name    handler-glpi-service-ticket
         command_line    /usr/bin/perl /usr/local/lib/nagios/event-handlers/glpi-9.1/ticket-service.pl event="$SERVICESTATE$" state="$SERVICESTATETYPE$" hoststate="$HOSTSTATE$" eventhost="$HOSTNAME$" service="$SERVICEDESC$" serviceattempts=" $SERVICEATTEMPT$" maxserviceattempts="$MAXSERVICEATTEMPTS$" servicestate="$SERVICESTATE$" lastservicestate="$LASTSERVICESTATE$" serviceoutput="$SERVICEOUTPUT$" servicestatetype="$SERVICESTATETYPE$" longserviceoutput="$LONGSERVICEOUTPUT$" >> /tmp/ticket-service.log
 }
-
+```
 
 
 Script location is arbitrary.
