@@ -53,7 +53,6 @@ object NotificationCommand "host-glpi-ticket-handler" {
 
   command = [ SysconfDir + "/icinga2/scripts/ticket-host.pl" ]
 
-/** do srodowiska mozna wyeksportowac praktycznie dowolne zmienne z obiektu objetego powiadomieniem */
   env = {
     NOTIFICATIONTYPE = "$notification.type$"
     HOSTALIAS = "$host.display_name$"
