@@ -13,9 +13,10 @@ my $ua = LWP::UserAgent->new;
 # --- configuration ---
 # user token is configured on selected user account
 # app_token is configured in glpi api configuration
-my $server_endpoint = "http://172.17.2.14/glpi/apirest.php";
-my $user_token = "0fcmmzahfzz4g8fu9myx2k8cg5t724nbvuhq6jmo";
-my $app_token = "qfaqlz2cpiapxd0nqr1kl6lchlkoohpa4n516lax";
+# API url
+my $server_endpoint = "http://glpi.server/glpi/apirest.php";
+my $user_token = "sfs9rkd0v5a2e4botcp18fycr0vhrn3gkv9xuti3";
+my $app_token = "ufkfgreaumq9yy0x83jpoak96kcc7grmm9uvzhv1";
 # --- configuration ---
 
 # session token used post login for further requests, this gets setup during login, so leave blank
@@ -26,16 +27,8 @@ my $login_url;
 my $req;
 my @tickety;
 
-# arguments are passed in form name=value name2=value2 ....
-# let's extract them
-my %arguments;
-
-foreach my $entry (@ARGV) {
-    my ($arg, $value) = split /=/, $entry;
-    print "$arg :: $value \n";
-    $arguments{$arg}=$value;
-}
-
+my @newtickets;
+my @servers;
 
 # login to service and obtain the session token
 sub login_to_glpi() {
@@ -47,27 +40,27 @@ $req->header('Authorization' => "user_token $user_token");
 $req->header('App-Token' => "$app_token");
 
 my $resp = $ua->request($req);
-my $textresp = decode_json($resp->decoded_content);
 
 if ($resp->is_success) {
+    my $textresp = decode_json($resp->decoded_content);
     $session_token = $textresp->{'session_token'};
-}
-else {
-    print "HTTP GET error code: ", $resp->code, "\n";
-    print "HTTP GET error message: ", $resp->message, "\n";
-    exit 1;
-}
-
+  }
+  else {
+      print "HTTP GET error code: ", $resp->code, "\n";
+      print "HTTP GET error message: ", $resp->message, "\n";
+      exit 1;
+  }
+  
 }
 
 
 sub collect_glpi_tickets() {
 	# find tickets for given host
-	my $request_string = uri_escape("criteria[0][field]=1&criteria[0][searchtype]=contains&criteria[0][value]=$arguments{'eventhost'}","=[]");
+	my $request_string = uri_escape("criteria[0][field]=1&criteria[0][searchtype]=contains&criteria[0][value]=[$ENV{'HOSTALIAS'}]","=[]");
 	# and for given service
-	$request_string .= uri_escape("&criteria[1][link]=AND&criteria[1][field]=1&criteria[1][searchtype]=contains&criteria[1][value]=$arguments{'service'}","=[]");
+	$request_string .= uri_escape("&criteria[1][link]=AND&criteria[1][field]=1&criteria[1][searchtype]=contains&criteria[1][value]=$ENV{'SERVICEDESC'}","=[]");
 	# and they have to be in "New" state
-	$request_string .= uri_escape("&criteria[2][link]=AND&criteria[2][field]=12&criteria[2][searchtype]=equals&criteria[2][value]=1","=[]");
+	$request_string .= uri_escape("&criteria[2][link]=AND&criteria[2][field]=12&criteria[2][searchtype]=equals&criteria[2][value]=notold","=[]");
 
 	my $ticket_search_url = $server_endpoint . "/search/Ticket?" . $request_string;
 
@@ -108,7 +101,7 @@ sub close_glpi_tickets() {
 
 	# go one by one through the tickets
 	foreach my $ticketid (@tickety) {
-		print "proba aktualizacji ticketu $ticketid\n";
+		print "attempting to update ticket id: $ticketid\n";
 		$ticket_update_url=$server_endpoint . "/Ticket/" . $ticketid;
 		$req = HTTP::Request->new(PUT=> $ticket_update_url);
 		$req->header('content-type' => 'application/json');
@@ -117,6 +110,7 @@ sub close_glpi_tickets() {
 		$req->header('Session-Token' => "$session_token");
 
 		# this means status = closed
+        # adjust as needed to reflect your needs and GLPI configuration
 		$post_data = {
 			'input' => {
 				'status' => 6,
@@ -147,22 +141,20 @@ sub insert_glpi_ticket() {
 	$req->header('App-Token' => "$app_token");
 	$req->header('Session-Token' => "$session_token");
 
+    # the actual body of the ticket is in 'content' field
 	my $ticket_data = { 
 		"input" => {
-			"name" => "$arguments{'service'} na $arguments{'eventhost'} jest w stanie critical.",
-			"content" => "$arguments{'service'} na $arguments{'eventhost'} jest w stanie critical.\n\r
-Host \t\t\t = $arguments{'eventhost'} \r
-Service Check \t = $arguments{'service'} \r
-State \t\t\t = $arguments{'event'} \r
-Check Attempts \t = $arguments{'serviceattempts'}/$arguments{'maxserviceattempts'} \r
-Check Command \t = $arguments{'servicecheckcommand'} \r
-Check Output \t = $arguments{'serviceoutput'} \r
-$arguments{'longserviceoutput'}",
+			"name" => "[$ENV{'HOSTALIAS'}] $ENV{'SERVICEDESC'} na $ENV{'HOSTALIAS'} jest w stanie critical.",
+			"content" => "$ENV{'SERVICEDESC'} na $ENV{'HOSTALIAS'} jest w stanie critical.\n\r
+Host \t\t\t = $ENV{'HOSTALIAS'} \r
+Service Check \t = $ENV{'SERVICEDESC'} \r
+State \t\t\t = $ENV{'SERVICESTATE'} \r
+Check Attempts \t = $ENV{'SERVICEATTEMPTS'}/$ENV{'MAXSERVICEATTEMPTS'} \r
+Check Command \t = $ENV{'SERVICECHECKCOMMAND'} \r
+Check Output \t = $ENV{'SERVICEOUTPUT'} \r
+$ENV{'LONGSERVICEOUTPUT'}",
 		}, 
 	};
-
-	#print Dumper($ticket_data);
-
 
 	$req->content(encode_json($ticket_data));
 
@@ -172,6 +164,7 @@ $arguments{'longserviceoutput'}",
 		print "Received reply: $message\n";
 		my $textresp = decode_json($resp->decoded_content);
 		print "Created ticket #$textresp->{'id'}\n";
+        push(@newtickets,$textresp->{'id'});
 		
 	}	
 	else {
@@ -180,46 +173,156 @@ $arguments{'longserviceoutput'}",
 	}
 }
 
+sub link_ticket_to_server() { 
+    # bind ticket to server, given list of tickets and hosts matches them together
+	my $post_data;
+	my $ticket_update_url;
+
+
+	foreach my $ticketid (@newtickets) {
+
+	$ticket_update_url=$server_endpoint . "/Ticket/" . $ticketid . "/Item_Ticket/";
+	$req = HTTP::Request->new(POST=> $ticket_update_url);
+	$req->header('content-type' => 'application/json');
+	$req->header('Authorization' => "user_token $user_token");
+	$req->header('App-Token' => "$app_token");
+	$req->header('Session-Token' => "$session_token");
+	foreach my $serwer (@servers) { 
+
+		print ("Linking ticket $ticketid with server $serwer\n");
+		$post_data = { 
+			'input' => { 
+				'items_id' => $serwer,
+				'itemtype' => 'Computer',
+				'tickets_id' => $ticketid,
+			}
+		};
+		$req->content(encode_json($post_data));
+
+		my $resp = $ua->request($req);
+		if ($resp->is_success) {
+			my $message = $resp->decoded_content;
+			print " [link ticket] Received reply: $message\n";
+		}
+		else {
+			print "HTTP POST error code: ", $resp->code, "\n";
+			print "HTTP POST error message: ", $resp->message, "\n";
+		}
+
+	} # foreach
+	} # foreach
+}
+
+sub find_host_by_ip() { 
+    # search where host address contains ^1.2.3.4$ , where 1.2.3.4 is host's IP
+    # this is a workaround for GLPI's search by ip function
+    # unfortunately GLPI does not support 'equals' for ip address and contains will return more results than necessary
+    # e.g. for equals='192.168.1.1' it will also return 192.168.1.10 or 192.168.1.104 , etc.
+
+	my $request_string = "criteria[0][field]=126&criteria[0][searchtype]=contains&criteria[0][value]=^$ENV{'HOSTADDRESS'}\$&forcedisplay[0]=2&forcedisplay[0]=2";
+
+
+	my $request_url = $server_endpoint . "/search/Computer?" . $request_string;
+
+	$req = HTTP::Request->new(GET => $request_url);
+	$req->header('content-type' => 'application/json');
+	$req->header('Authorization' => "user_token $user_token");
+	$req->header('App-Token' => "$app_token");
+	$req->header('Session-Token' => "$session_token");
+
+	my $resp = $ua->request($req);
+	my $textresp = decode_json($resp->decoded_content);
+
+	if ($resp->is_success) {
+		my $message = $resp->decoded_content;
+		print "Received reply: $message\n";
+	}
+	else {
+		print "HTTP POST error code: ", $resp->code, "\n";
+		print "HTTP POST error message: ", $resp->message, "\n";
+	}
+
+	my $dane = $textresp->{data};
+
+# create a list of ticket ids
+
+	foreach my $entry (@$dane) {
+#		print "i found a computer with name: $entry->{1} , ip address $entry->{126}, id $entry->{2}\n";
+		push(@servers,$entry->{2});
+    }
+}
+
+#####
+
+
+sub logout_from_glpi() {
+	print "logout from GLPI\n";
+	my $logout_url = $server_endpoint . "/killSession";
+	$req = HTTP::Request->new(GET => $logout_url);
+	$req->header('content-type' => 'application/json');
+	$req->header('Authorization' => "user_token $user_token");
+	$req->header('App-Token' => "$app_token");
+	$req->header('Session-Token' => "$session_token");
+	
+	my $resp = $ua->request($req);
+	
+	if ($resp->is_success) {
+		print "logout successful";
+	}
+	else {
+		print "HTTP GET error code: ", $resp->code, "\n";
+		print "HTTP GET error message: ", $resp->message, "\n";
+		exit 1;
+	}	
+	
+}
 
 
 
-if ($arguments{"hoststate"} eq 'DOWN') {
-    # if the host is down, exit. there is already a ticket for the host.
+if ($ENV{'HOSTSTATE'} eq 'DOWN') {
+    # if the host is down, exit
+    print " ------------------------- \n";
     exit 0
 }
 
 
-if ($arguments{"servicestatetype"} eq 'SOFT') {
-	# don't do anything until monitoring system gets certain that the problem persists after max_retries
+if ($ENV{'SERVICESTATETYPE'} eq 'SOFT') {
+    # soft states are ignored
+	print "Ignoring SOFT state\n";
+	print " ------------------------- \n";
 	exit 0
 }
 
 # get the service ticket
+#
 login_to_glpi();
 collect_glpi_tickets();
-
+find_host_by_ip();
 
 # if service has recovered, close all the outstanding tickets
 # we find all the tickets, just to make sure that there are no extra tickets left
 # e.g. from test runs of the script
 
-if ("$arguments{'servicestate'}" eq 'OK') { 
-	print "service $arguments{'service'} has recovered, closing the tickets\n";
+if ("$ENV{'SERVICESTATE'}" eq 'OK') { 
+	print "service $ENV{'SERVICEDESC'} has recovered, closing the tickets\n";
 	close_glpi_tickets()
 }   # if service has recovered
 
 # if service has gone into failed state
 # insert a new ticket
-if ("$arguments{'servicestate'}" eq 'CRITICAL') {
+if ("$ENV{'SERVICESTATE'}" eq 'CRITICAL') {
 	my $ile = @tickety;
 	
 	if ($ile > 0) {
-		print "$arguments{'service'} already has $ile open tickets, skipping\n";
+		print "service $ENV{'SERVICEDESC'} already has $ile open tickets, no point making another one\n";
 	} else {
-		print "$arguments{'service'} has no open tickets, creating one\n";
+		print "service $ENV{'SERVICEDESC'} has no open tickets, making a new one\n";
 		insert_glpi_ticket();
+        link_ticket_to_server();
 
 	}
 }
 
+logout_from_glpi();
 
+print " ------------------------- \n";
